@@ -1,6 +1,6 @@
 # Network Quantification Pipeline
 
-A high-throughput pipeline for quantifying filamentous networks in 2D fluorescence microscopy images.
+A high-throughput pipeline for quantifying web/wrinkle like mucin networks in 2D fluorescence microscopy images of mice corneal epithilium.
 Metrics include per-image network pixel counts and summary plots. Includes batch QC.
 
 ---
