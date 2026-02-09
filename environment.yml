@@ -1,0 +1,21 @@
+name: mucinet
+channels:
+  - conda-forge
+  - pytorch
+  - nvidia
+dependencies:
+  - python=3.10
+  - numpy
+  - scipy
+  - pandas
+  - matplotlib
+  - scikit-image
+  - tifffile
+  - tqdm
+  - opencv
+  - oiffile
+  - scikit-learn
+  - seaborn
+  - pytorch
+  - cpuonly
+  - monai

@@ -6,13 +6,12 @@ Metrics include per-image network pixel counts and summary plots. Includes batch
 ---
 ## Methodology
 - Networks: MONAI AttentionUnet segmentation on chan1 images.
-- Reproducibility: Run parameters and environment details are recorded in `analysis_runs/<run_id>/run_meta.json`.
 
 ---
 ## Features
-- End-to-end from OIB -> MIPs -> metrics/plots
+- End-to-end from OIB -> chan1 max-projection -> metrics/plots
 - Batch processing
-- Per-image stats plus combined CSVs and plots with run metadata
+- Per-image stats plus combined CSVs and plots
 
 ---
 ## Installation
@@ -27,12 +26,14 @@ conda env create -f environment.yml
 ```
 3) Activate
 ```
-conda activate mucin_env
+conda activate mucinet
 ```
-4) (Optional) Micro-SAM + GPU
+4) (Optional) Enable GPU PyTorch after install
+- This environment installs CPU PyTorch by default.
+- To switch to GPU (CUDA 12.1), uninstall CPU PyTorch packages and reinstall CUDA-enabled PyTorch:
 ```
-conda install -c conda-forge micro_sam           # CPU
-conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia  # GPU (optional)
+conda remove pytorch cpuonly
+conda install pytorch pytorch-cuda=12.1 -c pytorch -c nvidia
 ```
 
 ---
@@ -46,20 +47,16 @@ conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvi
 |-- Trial_03/
 ```
 
-### Analysis-ready layout (per-genotype folders under each trial)
+### Analysis-ready layout (optional comparison subfolders under each trial)
 ```
 <Project_Root>/
 |-- Trial_01/
-|   |-- Rosa/               # WT example
-|   |   |-- MIPs/
-|   |   |   |-- chan0/
-|   |   |   |-- chan1/
-|   |   `-- analysis_results/
-|   `-- V1/                 # Mutant example
-|       |-- MIPs/
-|       |   |-- chan0/
-|       |   |-- chan1/
-|       `-- analysis_results/
+|   |-- WT/                 # optional comparison folder (WT is treated specially in plots)
+|   |   |-- sampleA.oib
+|   |   `-- MAX_chan1_sampleA.tif
+|   `-- Mut/                # any other folder name is treated as a comparison group label
+|       |-- sampleB.oib
+|       `-- MAX_chan1_sampleB.tif
 `-- Trial_02/
     `-- ...
 ```
@@ -69,22 +66,24 @@ Notes:
 ---
 ## Workflow
 
-### 1) Convert OIBs to max-projection TIFs (optional)
+### 1) Convert OIBs to chan1 max-projection TIFs (optional)
 ```
-python src/convert_oibs.py "<project_root>" --skip-existing
+python src/convert_oibs.py "<project_root>"
 ```
-- Scans for `.oib` and writes max-projections to `MIPs/chan0` and `MIPs/chan1`.
-- `--skip-existing` avoids overwriting existing TIFs.
+- Scans for `.oib` and writes `MAX_chan1_<oib_stem>.tif` next to each `.oib`.
+- Use `--force-convert` to overwrite existing `MAX_chan1_*.tif`.
 
 ### 2) Run automated analysis
 ```
-python run_analysis.py "<project_root>" --run-id <optional_name>
+python run_analysis.py "<project_root>"
 ```
-- Finds every `MIPs/chan1/*.tif` (trial/genotype aware).
-- Writes per-image outputs to each genotype's `analysis_results/`.
-- Writes combined stats/plots/metadata to `<project_root>/analysis_runs/<run_id>/` (timestamp if not set).
+- Finds every chan1 MIP TIFF under the project root:
+  - `MAX_chan1_*.tif` next to `.oib`, or
+  - `MIPs/chan1/*.tif` if you already generated MIPs elsewhere.
+- Writes outputs under `<project_root>/mucinet-results/` mirroring the dataset structure.
 - If your model is not at `model_training/lean_best.pth`, pass `--model-path`.
- - Optional one-click: run `run_analysis.bat` and follow the prompts.
+- Optional: run conversion first via `--convert-oibs` (plus `--force-convert` if needed).
+- Optional: generate a single full-resolution global montage via `--montage`.
 
 ### 3) (Optional) Train MONAI segmentation model
 ```
@@ -96,13 +95,12 @@ python model_training/monai_train.py --dir "E:\path\to\training\data"
 
 ---
 ## Outputs
-- Per genotype `analysis_results/`:
-  - `network_binary/`, `network_overlay/`
-  - `quantification/` per-image CSVs
-- Project-level `analysis_runs/<run_id>/`:
-  - `DATA_Networks_Combined.csv`
-  - `PLOT_Per_Trial_Breakdown.png`, `PLOT_Global_Summary.png`
-  - `run_meta.json` (parameters, platform, run id)
+- Per-image outputs under `<project_root>/mucinet-results/` mirroring your dataset structure:
+  - `network_binary/`, `network_overlay/`, `metrics/`
+- Project-level outputs under `<project_root>/mucinet-results/`:
+  - `combined_metrics.csv`
+  - `per_trial_bar.png`, `global_bar.png`
+  - `global_montage.png` (only when `--montage` is used)
 
 ---
 ## Notes

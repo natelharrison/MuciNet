@@ -48,9 +48,20 @@ def main():
     )
     parser.add_argument("--model-path", type=Path, default=None,
                         help="Path to MONAI checkpoint (default: model_training/lean_best.pth).")
-    parser.add_argument("--full-res", action="store_true",
-                        help="Generate a single full-resolution global montage.")
+    parser.add_argument(
+        "--montage",
+        action="store_true",
+        help="Generate a single full-resolution global montage.",
+    )
+    parser.add_argument(
+        "--full-res",
+        action="store_true",
+        help=argparse.SUPPRESS,  # deprecated alias for --montage
+    )
     args = parser.parse_args()
+
+    if getattr(args, "full_res", False):
+        args.montage = True
 
     if not validate_inputs(args.dir): sys.exit(1)
     path_str = str(args.dir)
@@ -87,7 +98,7 @@ def main():
         net_args += ["--model-path", str(args.model_path)]
     run_step("network_detector.py", net_args)
     compile_args = [path_str]
-    if args.full_res:
+    if args.montage:
         compile_args.append("--montage")
     run_step("compile_stats.py", compile_args)  # Now includes montage generation
 
