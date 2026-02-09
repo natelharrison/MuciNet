@@ -11,8 +11,8 @@ MONTAGE_COLS = 4
 
 
 def get_output_root(input_root: Path) -> Path:
-    """returns the output root folder outside the input data directory."""
-    return input_root.parent / "output" / input_root.name
+    """returns the output root folder under the dataset root directory."""
+    return input_root / "mucinet-results"
 
 
 def imread(path):
@@ -90,9 +90,8 @@ def create_montage(
             for g in groups
         ]
     elif group_by_genotype:
-        wts = sorted([p for p in image_paths if 'wt' in get_genotype_from_name(p.name).lower()])
-        muts = sorted([p for p in image_paths if 'mutant' in get_genotype_from_name(p.name).lower()])
-        groups = [(wts, '#555555', None, 0), (muts, '#E63946', None, 0)]
+        # No grouping inference; treat as a single group.
+        groups = [(sorted(image_paths), "#555555", None, 0)]
     else:
         groups = [(sorted(image_paths), '#555555', None, 0)]
 
@@ -165,13 +164,6 @@ def create_montage(
     plt.close(fig)
 
 
-def get_genotype_from_name(filename):
-    clean = filename.lower().replace('_', ' ').replace('-', ' ')
-    if any(x in clean.split() for x in ['v', 'v1', 'v2']):
-        return 'Mutant'
-    return 'WT'
-
-
 def _worker(args):
     paths, func = args
     img_path, mask_path, input_root, output_root = paths
@@ -193,14 +185,21 @@ def _worker(args):
                 rel_owner = mips_owner.relative_to(input_root)
             except ValueError:
                 rel_owner = Path(mips_owner.name)
-            results_root = output_root / rel_owner / "analysis_results"
+            results_root = output_root / rel_owner
             break
+
+    # If inputs are not under a MIPs folder (e.g. MAX_chan1_*.tif next to OIBs), write results next to that owner dir.
     if results_root is None:
-        return
+        owner_dir = img_path.parent
+        try:
+            rel_owner = owner_dir.relative_to(input_root)
+        except ValueError:
+            rel_owner = Path(owner_dir.name)
+        results_root = output_root / rel_owner
 
     for key, data in results.items():
         if hasattr(data, 'to_csv'):
-            save_dir = results_root / 'quantification'
+            save_dir = results_root / "metrics"
             save_dir.mkdir(parents=True, exist_ok=True)
             data.to_csv(save_dir / f"{img_path.stem}_{key}", index=False)
         else:
@@ -212,7 +211,24 @@ def build_tasks(parent_dir, output_root=None):
     if output_root is None:
         output_root = get_output_root(parent_dir)
     tasks = []
-    for img in parent_dir.rglob("MIPs/chan1/*.tif"):
+
+    # Prefer MIPs/chan1 if present; otherwise fall back to MAX_chan1_*.tif next to OIBs.
+    mip_imgs = list(parent_dir.rglob("MIPs/chan1/*.tif")) + list(parent_dir.rglob("MIPs/chan1/*.tiff"))
+    for img in sorted(set(mip_imgs)):
+        if "mucinet-results" in img.parts:
+            continue
+        tasks.append((img, None, parent_dir, output_root))
+
+    chan1_imgs = list(parent_dir.rglob("MAX_chan1_*.tif")) + list(parent_dir.rglob("MAX_chan1_*.tiff"))
+    for img in sorted(set(chan1_imgs)):
+        if "mucinet-results" in img.parts:
+            continue
+        # If this is already in MIPs/chan1, it will be handled by mip_imgs above.
+        if img.parent.name == "chan1" and img.parent.parent.name == "MIPs":
+            continue
+        # Avoid double-processing when a MIPs/chan1 folder exists for the same owner dir.
+        if (img.parent / "MIPs" / "chan1").exists():
+            continue
         tasks.append((img, None, parent_dir, output_root))
     return tasks
 

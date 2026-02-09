@@ -6,34 +6,33 @@ import tifffile
 from tqdm import tqdm
 
 
-def convert_single_oib(image_path: Path):
+def convert_single_oib(oib_path: Path, owner_dir: Path):
     # Use context manager to safely handle file opening
-    with oiffile.OifFile(image_path) as oib:
+    with oiffile.OifFile(oib_path) as oib:
         image = oib.asarray()
 
-    # Process first 2 channels
-    for i, chan in enumerate(image[:2]):
-        chan_name = f"chan{i}"
+    if image.shape[0] < 2:
+        raise ValueError(f"Expected at least 2 channels in OIB, got shape={image.shape}")
 
-        # OUTPUT: Trial_Folder / MIPs / chanX / Image.tif
-        save_dir = image_path.parent / 'MIPs' / chan_name
-        save_dir.mkdir(parents=True, exist_ok=True)
-
-        save_path = save_dir / f'MAX_{chan_name}_{image_path.stem}.tif'
-
-        # Create Max Projection
-        max_z = np.max(chan, axis=0)
-        tifffile.imwrite(save_path, max_z)
+    # Only channel-1 max projection, saved next to the OIB (no MIPs folder, no chan0).
+    chan1 = image[1]
+    save_path = owner_dir / f"MAX_chan1_{oib_path.stem}.tif"
+    max_z = np.max(chan1, axis=0)
+    tifffile.imwrite(save_path, max_z)
 
 
 def main():
     parser = argparse.ArgumentParser(description="Step 1: Convert OIBs to Max-Z TIFs")
-    parser.add_argument('dir', type=Path, help="Root folder containing .oib files")
-    parser.add_argument('--skip-existing', action='store_true',
-                        help="Skip conversion if output TIF already exists")
+    parser.add_argument("dir", type=Path, help="Dataset ROOT containing trial folders")
+    parser.add_argument(
+        "--force-convert",
+        "--force_convert",
+        action="store_true",
+        help="Recompute chan1 MIPs even if outputs already exist",
+    )
     args = parser.parse_args()
 
-    oib_files = list(args.dir.rglob('*.oib'))
+    oib_files = list(args.dir.rglob("*.oib"))
 
     if not oib_files:
         print(f"No .oib files found in {args.dir}")
@@ -41,21 +40,17 @@ def main():
 
     print(f"Found {len(oib_files)} OIB files. Converting...")
 
-    for image_path in tqdm(oib_files, desc="Converting"):
+    for oib_path in tqdm(oib_files, desc="Converting"):
         try:
-            # Check existence for chan0/chan1 outputs
-            skip = False
-            if args.skip_existing:
-                for i in range(2):
-                    save_path = image_path.parent / 'MIPs' / f'chan{i}' / f'MAX_chan{i}_{image_path.stem}.tif'
-                    if save_path.exists():
-                        skip = True
-                        break
-            if skip:
+            owner_dir = oib_path.parent
+            expected1 = owner_dir / f"MAX_chan1_{oib_path.stem}.tif"
+
+            if not args.force_convert and expected1.exists():
                 continue
-            convert_single_oib(image_path)
+
+            convert_single_oib(oib_path, owner_dir)
         except Exception as e:
-            print(f"Error converting {image_path.name}: {e}")
+            print(f"Error converting {oib_path.name}: {e}")
 
     print("\n[!] Conversion Complete.")
 
