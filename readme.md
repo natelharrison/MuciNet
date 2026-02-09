@@ -18,7 +18,7 @@ Metrics include per-image network pixel counts and summary plots. Includes batch
 1) Clone/download and enter the repo
 ```
 git clone <repo_url>
-cd abboud_project
+cd mucinet
 ```
 2) Create env
 ```
