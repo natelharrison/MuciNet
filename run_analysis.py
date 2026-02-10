@@ -11,7 +11,7 @@ import dataset_index
 
 def validate_inputs(data_dir: Path) -> bool:
     try:
-        dataset_index.index_dataset(data_dir, require_chan1_mips=False)
+        dataset_index.index_dataset(data_dir, require_tiffs=False)
     except dataset_index.DatasetLayoutError as e:
         print(f"[!] layout error: {e}")
         return False
@@ -44,7 +44,7 @@ def main():
         "--force-convert",
         "--force_convert",
         action="store_true",
-        help="With --convert-oibs: force .oib -> MIP conversion even if MIPs already exist",
+        help="With --convert-oibs: force .oib -> TIFF conversion even if outputs already exist",
     )
     parser.add_argument("--model-path", type=Path, default=None,
                         help="Path to MONAI checkpoint (default: model_training/lean_best.pth).")
@@ -77,15 +77,14 @@ def main():
 
     # Index for logging and final validation.
     try:
-        idx = dataset_index.index_dataset(args.dir, require_chan1_mips=True)
+        idx = dataset_index.index_dataset(args.dir, require_tiffs=True)
     except dataset_index.DatasetLayoutError as e:
         print(f"[!] layout error: {e}")
         sys.exit(1)
 
     if not idx.images:
-        print("[!] error: no channel-1 MIP TIFFs found under any trial folder.")
-        print("[i] expected either ROOT/<TRIAL>/MAX_chan1_*.tif (or MIPs/chan1/*.tif)")
-        print("[i] or ROOT/<TRIAL>/<GROUP>/MAX_chan1_*.tif (or MIPs/chan1/*.tif)")
+        print("[!] error: no input TIFFs found under any phenotype folder.")
+        print("[i] expected ROOT/<TRIAL>/<PHENOTYPE>/*.tif")
         print("[i] if you only have .oib files, run: python src/convert_oibs.py <ROOT>")
         sys.exit(1)
 

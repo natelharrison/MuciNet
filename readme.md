@@ -5,11 +5,11 @@ Metrics include per-image network pixel counts and summary plots. Includes batch
 
 ---
 ## Methodology
-- Networks: MONAI AttentionUnet segmentation on chan1 images.
+- Networks: MONAI AttentionUnet segmentation on input TIFFs.
 
 ---
 ## Features
-- End-to-end from OIB -> chan1 max-projection -> metrics/plots
+- End-to-end from OIB -> max-projection -> metrics/plots
 - Batch processing
 - Per-image stats plus combined CSVs and plots
 
@@ -53,10 +53,10 @@ conda install pytorch pytorch-cuda=12.1 -c pytorch -c nvidia
 |-- Trial_01/
 |   |-- WT/                 # optional comparison folder (WT is treated specially in plots)
 |   |   |-- sampleA.oib
-|   |   `-- MAX_chan1_sampleA.tif
+|   |   `-- MAX_sampleA.tif
 |   `-- Mut/                # any other folder name is treated as a comparison group label
 |       |-- sampleB.oib
-|       `-- MAX_chan1_sampleB.tif
+|       `-- MAX_sampleB.tif
 `-- Trial_02/
     `-- ...
 ```
@@ -66,20 +66,18 @@ Notes:
 ---
 ## Workflow
 
-### 1) Convert OIBs to chan1 max-projection TIFs (optional)
+### 1) Convert OIBs to max-projection TIFs (optional)
 ```
 python src/convert_oibs.py "<project_root>"
 ```
-- Scans for `.oib` and writes `MAX_chan1_<oib_stem>.tif` next to each `.oib`.
-- Use `--force-convert` to overwrite existing `MAX_chan1_*.tif`.
+- Scans for `.oib` and writes `MAX_<oib_stem>.tif` next to each `.oib`.
+- Use `--force-convert` to overwrite existing `MAX_*.tif`.
 
 ### 2) Run automated analysis
 ```
 python run_analysis.py "<project_root>"
 ```
-- Finds every chan1 MIP TIFF under the project root:
-  - `MAX_chan1_*.tif` next to `.oib`, or
-  - `MIPs/chan1/*.tif` if you already generated MIPs elsewhere.
+- Finds every input TIFF directly inside each phenotype folder: `<TRIAL>/<PHENOTYPE>/*.tif`.
 - Writes outputs under `<project_root>/mucinet-results/` mirroring the dataset structure.
 - If your model is not at `model_training/lean_best.pth`, pass `--model-path`.
 - Optional: run conversion first via `--convert-oibs` (plus `--force-convert` if needed).

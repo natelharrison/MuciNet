@@ -27,23 +27,19 @@ def _iter_trial_dirs(root: Path) -> List[Path]:
 
 
 def _strip_mip_prefix(stem: str) -> str:
-    # Matches current MIP naming from src/convert_oibs.py: MAX_chanX_<image_id>.tif
-    for prefix in ("MAX_chan0_", "MAX_chan1_"):
+    # Matches max-projection naming conventions: MAX_<image_id>.tif (and legacy MAX_chan*_...)
+    for prefix in ("MAX_", "MAX_chan1_", "MAX_chan0_"):
         if stem.startswith(prefix):
             return stem[len(prefix) :]
     return stem
 
 
-def _list_chan1_tiffs(owner_dir: Path) -> List[Path]:
-    """Return chan1 MIP tiffs for an owner directory, preferring MIPs/chan1 if present."""
-    mip_dir = owner_dir / "MIPs" / "chan1"
-    if mip_dir.exists():
-        mips = sorted([p for p in mip_dir.iterdir() if p.is_file() and p.suffix.lower() in (".tif", ".tiff")])
-        if mips:
-            return mips
-    # Newer conversion output: MAX_chan1_*.tif next to OIBs
-    tifs = sorted(list(owner_dir.glob("MAX_chan1_*.tif")) + list(owner_dir.glob("MAX_chan1_*.tiff")))
-    return tifs
+def _list_input_tiffs(owner_dir: Path) -> List[Path]:
+    """
+    Return input TIFFs located directly in the owner directory.
+    TIFFs under any MIPs folder are intentionally ignored.
+    """
+    return sorted(list(owner_dir.glob("*.tif")) + list(owner_dir.glob("*.tiff")))
 
 
 @dataclass(frozen=True)
@@ -56,8 +52,7 @@ class DatasetImage:
     trial_dir: Path
     owner_dir: Path  # either trial_dir or trial_dir/<comparison_group>
 
-    mip_chan1_path: Path
-    mip_chan0_path: Optional[Path]
+    tiff_path: Path
     source_oib_path: Optional[Path]
 
     output_root: Path
@@ -70,8 +65,8 @@ class DatasetImage:
 class TrialIndex:
     trial_name: str
     trial_dir: Path
-    groups_present: Tuple[str, ...]  # empty when trial-level MIPs (no comparison groups)
-    image_counts: Dict[str, int]  # group -> count; uses "NA" when trial-level
+    groups_present: Tuple[str, ...]  # phenotype subdirectory names
+    image_counts: Dict[str, int]  # phenotype -> count
 
 
 @dataclass(frozen=True)
@@ -98,16 +93,13 @@ class DatasetIndex:
 def index_dataset(
     root: Path,
     *,
-    require_chan1_mips: bool = True,
+    require_tiffs: bool = True,
 ) -> DatasetIndex:
     """
     Index datasets rooted at ROOT with trial folders as immediate children.
 
-    Each trial may be either:
-    - Trial-level: ROOT/<TRIAL>/MIPs/chan1/*.tif
-    - Grouped:     ROOT/<TRIAL>/<GROUP>/MIPs/chan1/*.tif
-
-    WT is treated specially by downstream stats only when a group folder named exactly "WT" exists.
+    Analysis inputs are expected at ROOT/<TRIAL>/<PHENOTYPE>/*.tif(f).
+    TIFFs under any MIPs folder are ignored; only TIFFs directly inside phenotype folders are used.
     """
     trial_dirs = _iter_trial_dirs(root)
 
@@ -117,87 +109,37 @@ def index_dataset(
     images_out: List[DatasetImage] = []
 
     for trial_dir in trial_dirs:
-        # Trial-level MIPs
-        trial_mips = _list_chan1_tiffs(trial_dir)
-
-        # Grouped MIPs (one level down)
-        group_dirs = [p for p in sorted(trial_dir.iterdir()) if p.is_dir() and p.name != "MIPs"]
-        group_mips_by_name: Dict[str, List[Path]] = {}
-        for gd in group_dirs:
-            mips = _list_chan1_tiffs(gd)
-            if mips:
-                group_mips_by_name[gd.name] = mips
-
-        if trial_mips and group_mips_by_name:
-            raise DatasetLayoutError(
-                f"Mixed trial layout detected: {trial_dir} contains both trial-level MIPs and grouped MIPs. "
-                f"Use either ROOT/<TRIAL>/MIPs/... or ROOT/<TRIAL>/<GROUP>/MIPs/... per trial."
-            )
-
-        counts: Dict[str, int] = {}
-
+        # Trial-level TIFFs are not accepted; TIFFs must live in phenotype folders.
+        trial_mips = _list_input_tiffs(trial_dir)
         if trial_mips:
-            counts["NA"] = 0
-            for mip in trial_mips:
-                image_id = _strip_mip_prefix(mip.stem)
-
-                chan0_path = trial_dir / "MIPs" / "chan0" / f"MAX_chan0_{image_id}.tif"
-                mip_chan0 = chan0_path if chan0_path.exists() else None
-
-                oib_path = (trial_dir / f"{image_id}.oib") if (trial_dir / f"{image_id}.oib").exists() else None
-
-                rel_owner = trial_dir.relative_to(root)
-                results_root = output_root / rel_owner
-                derived_mask = results_root / "network_binary" / mip.name
-                derived_overlay = results_root / "network_overlay" / mip.name
-                derived_metrics = results_root / "metrics" / f"{mip.stem}_network_stats.csv"
-
-                images_out.append(
-                    DatasetImage(
-                        root=root,
-                        trial_name=trial_dir.name,
-                        comparison_group=None,
-                        image_id=image_id,
-                        trial_dir=trial_dir,
-                        owner_dir=trial_dir,
-                        mip_chan1_path=mip,
-                        mip_chan0_path=mip_chan0,
-                        source_oib_path=oib_path,
-                        output_root=output_root,
-                        derived_mask_path=derived_mask,
-                        derived_overlay_path=derived_overlay,
-                        derived_metrics_csv_path=derived_metrics,
-                    )
-                )
-                counts["NA"] += 1
-
-            trials_out.append(
-                TrialIndex(
-                    trial_name=trial_dir.name,
-                    trial_dir=trial_dir,
-                    groups_present=tuple(),
-                    image_counts=counts,
-                )
+            raise DatasetLayoutError(
+                f"Invalid trial layout: found TIFFs directly under {trial_dir}. "
+                f"Expected ROOT/<TRIAL>/<PHENOTYPE>/*.tif"
             )
-            continue
 
-        # Grouped trial
-        groups_present = tuple(sorted(group_mips_by_name.keys()))
-        for group_name, mips in group_mips_by_name.items():
-            if require_chan1_mips and not mips:
+        phenotype_dirs = [p for p in sorted(trial_dir.iterdir()) if p.is_dir() and p.name != "MIPs"]
+        if not phenotype_dirs:
+            raise DatasetLayoutError(
+                f"Invalid trial folder (missing phenotype subdirs): {trial_dir}. "
+                f"Expected ROOT/<TRIAL>/<PHENOTYPE>/*.tif"
+            )
+
+        counts: Dict[str, int] = {p.name: 0 for p in phenotype_dirs}
+        groups_present = tuple([p.name for p in phenotype_dirs])
+
+        for phenotype_dir in phenotype_dirs:
+            group_name = phenotype_dir.name
+            mips = _list_input_tiffs(phenotype_dir)
+            if require_tiffs and not mips:
                 continue
-            counts[group_name] = counts.get(group_name, 0) + len(mips)
 
-            owner_dir = trial_dir / group_name
+            counts[group_name] += len(mips)
             for mip in mips:
                 image_id = _strip_mip_prefix(mip.stem)
 
-                chan0_path = owner_dir / "MIPs" / "chan0" / f"MAX_chan0_{image_id}.tif"
-                mip_chan0 = chan0_path if chan0_path.exists() else None
+                oib_path = (phenotype_dir / f"{image_id}.oib") if (phenotype_dir / f"{image_id}.oib").exists() else None
 
-                oib_path = (owner_dir / f"{image_id}.oib") if (owner_dir / f"{image_id}.oib").exists() else None
-
-                rel_owner = owner_dir.relative_to(root)
+                rel_owner = phenotype_dir.relative_to(root)
                 results_root = output_root / rel_owner
                 derived_mask = results_root / "network_binary" / mip.name
                 derived_overlay = results_root / "network_overlay" / mip.name
@@ -210,9 +152,8 @@ def index_dataset(
                         comparison_group=group_name,
                         image_id=image_id,
                         trial_dir=trial_dir,
-                        owner_dir=owner_dir,
-                        mip_chan1_path=mip,
-                        mip_chan0_path=mip_chan0,
+                        owner_dir=phenotype_dir,
+                        tiff_path=mip,
                         source_oib_path=oib_path,
                         output_root=output_root,
                         derived_mask_path=derived_mask,

@@ -121,7 +121,7 @@ def analyze_networks(image, mask):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Run MONAI network segmentation on chan1 MIPs."
+        description="Run MONAI network segmentation on input TIFFs."
     )
     parser.add_argument("parent_dir", type=Path, help="Project root containing trial folders")
     parser.add_argument(

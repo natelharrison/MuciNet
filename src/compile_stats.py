@@ -16,7 +16,7 @@ import network_detector
 
 
 def _strip_mip_prefix(stem: str) -> str:
-    for prefix in ("MAX_chan0_", "MAX_chan1_"):
+    for prefix in ("MAX_", "MAX_chan0_", "MAX_chan1_"):
         if stem.startswith(prefix):
             return stem[len(prefix) :]
     return stem
@@ -133,20 +133,34 @@ def make_bar_plots(net_df, output_dir: Path):
     df = net_df.copy()
     df["comparison_group"] = df["comparison_group"].fillna("NA")
 
+    y_col = "monai_mask_pixels"
+    y_label = "Pixel Count"
+    title_suffix = ""
+    if "monai_mask_pixels_norm_to_wt" in df.columns and df["monai_mask_pixels_norm_to_wt"].notna().any():
+        y_col = "monai_mask_pixels_norm_to_wt"
+        y_label = "Norm Pixel Count"
+        title_suffix = " (Normalized to WT)"
+        df = df[df[y_col].notna()].copy()
+
     # Per-trial bar plot (means with SE).
-    fig, ax = plt.subplots(1, 1, figsize=(max(10, 0.5 * df["trial_name"].nunique()), 6))
+    fig, ax = plt.subplots(1, 1, figsize=(max(12, 0.75 * df["trial_name"].nunique()), 7))
     sns.barplot(
         data=df,
         x="trial_name",
-        y="monai_mask_pixels",
+        y=y_col,
         hue="comparison_group",
         errorbar="se",
         ax=ax,
     )
-    ax.set_title("Network Pixels Per Trial", fontweight="bold")
+    ax.set_title(f"Network Pixels Per Trial{title_suffix}", fontweight="bold")
     ax.set_xlabel("")
-    ax.set_ylabel("Pixel Count")
-    plt.setp(ax.get_xticklabels(), rotation=25, ha="right")
+    ax.set_ylabel(y_label)
+    if y_col == "monai_mask_pixels_norm_to_wt":
+        ax.axhline(1.0, linestyle=":", color="black", alpha=0.4, linewidth=1)
+    ax.tick_params(axis="x", labelrotation=90, labelsize=8)
+    for lab in ax.get_xticklabels():
+        lab.set_ha("center")
+    fig.subplots_adjust(bottom=0.35)
     sns.despine(offset=10, trim=True)
     plt.tight_layout()
     plt.savefig(output_dir / "per_trial_bar.png", dpi=300)
@@ -157,13 +171,18 @@ def make_bar_plots(net_df, output_dir: Path):
     sns.barplot(
         data=df,
         x="comparison_group",
-        y="monai_mask_pixels",
+        y=y_col,
         errorbar="se",
         ax=ax2,
     )
-    ax2.set_title("Network Pixels Global", fontweight="bold")
+    ax2.set_title(f"Network Pixels Global{title_suffix}", fontweight="bold")
     ax2.set_xlabel("")
-    ax2.set_ylabel("Pixel Count")
+    ax2.set_ylabel(y_label)
+    if y_col == "monai_mask_pixels_norm_to_wt":
+        ax2.axhline(1.0, linestyle=":", color="black", alpha=0.4, linewidth=1)
+    ax2.tick_params(axis="x", labelrotation=90, labelsize=10)
+    for lab in ax2.get_xticklabels():
+        lab.set_ha("center")
     sns.despine(offset=10, trim=True)
     plt.tight_layout()
     plt.savefig(output_dir / "global_bar.png", dpi=300)
@@ -178,7 +197,9 @@ def save_global_network_montage(output_root: Path, output_dir: Path):
     if not all_images:
         return
 
-    dpi = 600
+    # Matplotlib montages get very slow and huge at high DPI with many images.
+    # Keep this moderate; users still get full-resolution per-image overlays in mucinet-results.
+    dpi = 300
     downscale = 1.0
 
     trial_map = {}

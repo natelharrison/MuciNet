@@ -12,12 +12,12 @@ def convert_single_oib(oib_path: Path, owner_dir: Path):
         image = oib.asarray()
 
     if image.shape[0] < 2:
-        raise ValueError(f"Expected at least 2 channels in OIB, got shape={image.shape}")
+        raise ValueError(f"Unexpected OIB array shape (need at least 2 planes in first dim), got shape={image.shape}")
 
-    # Only channel-1 max projection, saved next to the OIB (no MIPs folder, no chan0).
-    chan1 = image[1]
-    save_path = owner_dir / f"MAX_chan1_{oib_path.stem}.tif"
-    max_z = np.max(chan1, axis=0)
+    # Single-channel max projection saved next to the OIB (no MIPs folder).
+    chan = image[1]
+    save_path = owner_dir / f"MAX_{oib_path.stem}.tif"
+    max_z = np.max(chan, axis=0)
     tifffile.imwrite(save_path, max_z)
 
 
@@ -28,11 +28,23 @@ def main():
         "--force-convert",
         "--force_convert",
         action="store_true",
-        help="Recompute chan1 MIPs even if outputs already exist",
+        help="Recompute max projection TIFFs even if outputs already exist",
     )
     args = parser.parse_args()
 
-    oib_files = list(args.dir.rglob("*.oib"))
+    # Only process OIBs located directly inside phenotype folders: ROOT/<TRIAL>/<PHENOTYPE>/*.oib
+    all_oibs = list(args.dir.rglob("*.oib"))
+    oib_files = []
+    for p in all_oibs:
+        try:
+            rel = p.relative_to(args.dir)
+        except ValueError:
+            continue
+        if "mucinet-results" in rel.parts or "MIPs" in rel.parts:
+            continue
+        if len(rel.parts) != 3:
+            continue
+        oib_files.append(p)
 
     if not oib_files:
         print(f"No .oib files found in {args.dir}")
@@ -43,7 +55,7 @@ def main():
     for oib_path in tqdm(oib_files, desc="Converting"):
         try:
             owner_dir = oib_path.parent
-            expected1 = owner_dir / f"MAX_chan1_{oib_path.stem}.tif"
+            expected1 = owner_dir / f"MAX_{oib_path.stem}.tif"
 
             if not args.force_convert and expected1.exists():
                 continue

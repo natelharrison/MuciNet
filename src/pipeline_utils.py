@@ -21,7 +21,11 @@ def imread(path):
 
 def imwrite(path, image):
     path.parent.mkdir(parents=True, exist_ok=True)
-    tifffile.imwrite(path, image)
+    # Help downstream TIFF readers (libtiff-based) interpret overlays correctly.
+    if isinstance(image, np.ndarray) and image.ndim == 3 and image.shape[-1] in (3, 4) and image.dtype == np.uint8:
+        tifffile.imwrite(path, image, photometric="rgb")
+    else:
+        tifffile.imwrite(path, image)
 
 
 def get_foreground(image, mask):
@@ -110,7 +114,7 @@ def create_montage(
     current_idx = 0
 
     def _short_label(stem):
-        clean = stem.replace("MAX_chan1_", "").replace("_", " ").strip()
+        clean = stem.replace("MAX_chan1_", "").replace("MAX_", "").replace("_", " ").strip()
         parts = clean.split()
         if len(parts) >= 2:
             return " ".join(parts[-2:])
@@ -177,25 +181,12 @@ def _worker(args):
     results = func(image, mask)
     if not results: return
 
-    results_root = None
-    for parent in img_path.parents:
-        if parent.name == "MIPs":
-            mips_owner = parent.parent
-            try:
-                rel_owner = mips_owner.relative_to(input_root)
-            except ValueError:
-                rel_owner = Path(mips_owner.name)
-            results_root = output_root / rel_owner
-            break
-
-    # If inputs are not under a MIPs folder (e.g. MAX_chan1_*.tif next to OIBs), write results next to that owner dir.
-    if results_root is None:
-        owner_dir = img_path.parent
-        try:
-            rel_owner = owner_dir.relative_to(input_root)
-        except ValueError:
-            rel_owner = Path(owner_dir.name)
-        results_root = output_root / rel_owner
+    owner_dir = img_path.parent
+    try:
+        rel_owner = owner_dir.relative_to(input_root)
+    except ValueError:
+        rel_owner = Path(owner_dir.name)
+    results_root = output_root / rel_owner
 
     for key, data in results.items():
         if hasattr(data, 'to_csv'):
@@ -212,22 +203,19 @@ def build_tasks(parent_dir, output_root=None):
         output_root = get_output_root(parent_dir)
     tasks = []
 
-    # Prefer MIPs/chan1 if present; otherwise fall back to MAX_chan1_*.tif next to OIBs.
-    mip_imgs = list(parent_dir.rglob("MIPs/chan1/*.tif")) + list(parent_dir.rglob("MIPs/chan1/*.tiff"))
-    for img in sorted(set(mip_imgs)):
+    # Only consider TIFFs located directly in phenotype folders (ROOT/<TRIAL>/<PHENOTYPE>/*.tif).
+    tiff_imgs = list(parent_dir.rglob("*.tif")) + list(parent_dir.rglob("*.tiff"))
+    for img in sorted(set(tiff_imgs)):
         if "mucinet-results" in img.parts:
             continue
-        tasks.append((img, None, parent_dir, output_root))
-
-    chan1_imgs = list(parent_dir.rglob("MAX_chan1_*.tif")) + list(parent_dir.rglob("MAX_chan1_*.tiff"))
-    for img in sorted(set(chan1_imgs)):
-        if "mucinet-results" in img.parts:
+        if "MIPs" in img.parts:
             continue
-        # If this is already in MIPs/chan1, it will be handled by mip_imgs above.
-        if img.parent.name == "chan1" and img.parent.parent.name == "MIPs":
+        try:
+            rel = img.relative_to(parent_dir)
+        except ValueError:
             continue
-        # Avoid double-processing when a MIPs/chan1 folder exists for the same owner dir.
-        if (img.parent / "MIPs" / "chan1").exists():
+        # Require TIFF to be directly inside the phenotype folder.
+        if len(rel.parts) != 3:
             continue
         tasks.append((img, None, parent_dir, output_root))
     return tasks
