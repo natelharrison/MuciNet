@@ -1,6 +1,9 @@
+# IDE
 .idea/
 
+# Python
 __pycache__/
 *.pyc
 
-mucinmet-results/
+# Pipeline outputs
+mucinet-results/
