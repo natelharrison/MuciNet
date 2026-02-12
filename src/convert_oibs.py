@@ -14,7 +14,7 @@ def convert_single_oib(oib_path: Path, owner_dir: Path):
     if image.shape[0] < 2:
         raise ValueError(f"Unexpected OIB array shape (need at least 2 planes in first dim), got shape={image.shape}")
 
-    # Single-channel max projection saved next to the OIB (no MIPs folder).
+    # Single-channel max projection saved next to the OIB.
     chan = image[1]
     save_path = owner_dir / f"MAX_{oib_path.stem}.tif"
     max_z = np.max(chan, axis=0)
@@ -40,7 +40,7 @@ def main():
             rel = p.relative_to(args.dir)
         except ValueError:
             continue
-        if "mucinet-results" in rel.parts or "MIPs" in rel.parts:
+        if "mucinet-results" in rel.parts:
             continue
         if len(rel.parts) != 3:
             continue

@@ -208,8 +208,6 @@ def build_tasks(parent_dir, output_root=None):
     for img in sorted(set(tiff_imgs)):
         if "mucinet-results" in img.parts:
             continue
-        if "MIPs" in img.parts:
-            continue
         try:
             rel = img.relative_to(parent_dir)
         except ValueError:

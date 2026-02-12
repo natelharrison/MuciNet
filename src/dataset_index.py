@@ -37,7 +37,7 @@ def _strip_mip_prefix(stem: str) -> str:
 def _list_input_tiffs(owner_dir: Path) -> List[Path]:
     """
     Return input TIFFs located directly in the owner directory.
-    TIFFs under any MIPs folder are intentionally ignored.
+    Only TIFFs directly inside the phenotype folder are used.
     """
     return sorted(list(owner_dir.glob("*.tif")) + list(owner_dir.glob("*.tiff")))
 
@@ -99,7 +99,7 @@ def index_dataset(
     Index datasets rooted at ROOT with trial folders as immediate children.
 
     Analysis inputs are expected at ROOT/<TRIAL>/<PHENOTYPE>/*.tif(f).
-    TIFFs under any MIPs folder are ignored; only TIFFs directly inside phenotype folders are used.
+    Only TIFFs directly inside phenotype folders are used.
     """
     trial_dirs = _iter_trial_dirs(root)
 
@@ -117,7 +117,15 @@ def index_dataset(
                 f"Expected ROOT/<TRIAL>/<PHENOTYPE>/*.tif"
             )
 
-        phenotype_dirs = [p for p in sorted(trial_dir.iterdir()) if p.is_dir() and p.name != "MIPs"]
+        # Consider only phenotype dirs that contain at least one TIFF or OIB directly inside them.
+        phenotype_dirs = []
+        for p in sorted(trial_dir.iterdir()):
+            if not p.is_dir():
+                continue
+            has_direct_tiff = any(p.glob("*.tif")) or any(p.glob("*.tiff"))
+            has_direct_oib = any(p.glob("*.oib"))
+            if has_direct_tiff or has_direct_oib:
+                phenotype_dirs.append(p)
         if not phenotype_dirs:
             raise DatasetLayoutError(
                 f"Invalid trial folder (missing phenotype subdirs): {trial_dir}. "
