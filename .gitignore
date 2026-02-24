@@ -7,3 +7,9 @@ __pycache__/
 
 # Pipeline outputs
 mucinet-results/
+/model_training/check_batch.png
+/model_training/curated_data/
+/model_training/curated_data/
+/model_training/wandb/
+/model_training/python
+/model_training/lean_best.pth
