@@ -36,10 +36,10 @@ from monai.transforms import (
 BATCH_SIZE = 16
 LR = 2e-4
 EPOCHS = 2000
-VAL_INTERVAL = 5
+VAL_INTERVAL = 5   # validate every N epochs to keep training fast
 NUM_WORKERS = 4
-PATIENCE = 128
-MIN_DELTA = 1e-4
+PATIENCE = 128     # stop if val dice hasn't improved in this many epochs
+MIN_DELTA = 1e-4   # improvement smaller than this is treated as noise, not real progress
 
 
 class LoadTiff(MapTransform):
@@ -48,7 +48,7 @@ class LoadTiff(MapTransform):
         for key in self.keys:
             arr = tifffile.imread(d[key])
             if arr.ndim == 2:
-                arr = arr[None, ...]
+                arr = arr[None, ...]  # add channel dim: (H, W) -> (1, H, W)
             d[key] = arr.astype(np.float32)
         return d
 
@@ -82,8 +82,11 @@ def check_loader_outputs(loader, output_path="check_batch.png", log_to_wandb=Tru
 
 def get_source_id_from_crop(path_str: str) -> str:
     """
-    Extract original source image ID from crop filename:
-      source_name_0003.tif -> source_name
+    Extract the source image ID from a crop filename.
+    e.g. source_name_0003.tif -> source_name
+
+    We use this to group crops by their source image when splitting train/val,
+    so all crops from the same image always land on the same side of the split.
     """
     stem = Path(path_str).stem
     m = re.match(r"^(.*)_\d{4}$", stem)
@@ -212,7 +215,7 @@ def main():
     args = parse_args()
 
     data_dir = Path(args.dir)
-    run_dir = data_dir.parent  # matches your existing behavior
+    run_dir = data_dir.parent  # checkpoints save one level up from the crops folder
     run_dir.mkdir(parents=True, exist_ok=True)
 
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -264,6 +267,8 @@ def main():
     if not files:
         raise ValueError("No valid image/mask pairs found.")
 
+    # one group label per crop, used by GroupShuffleSplit to keep crops from the same
+    # source image together so they don't leak between train and val
     groups = [get_source_id_from_crop(f["image"]) for f in files]
     unique_sources = sorted(set(groups))
 
@@ -283,7 +288,7 @@ def main():
 
         train_sources = set(get_source_id_from_crop(f["image"]) for f in train_files)
         val_sources = set(get_source_id_from_crop(f["image"]) for f in val_files)
-        assert train_sources.isdisjoint(val_sources), "Leakage detected: train/val source overlap"
+        assert train_sources.isdisjoint(val_sources), "Leakage detected: train/val source overlap"  # belt and suspenders
 
         print(f"[split] train tiles: {len(train_files)} | val tiles: {len(val_files)}")
         print(f"[split] unique source images: train={len(train_sources)} | val={len(val_sources)}")
@@ -366,6 +371,8 @@ def main():
         strides=(2, 2, 2, 2),
     ).to(DEVICE)
 
+    # torch.compile gives a good speedup on modern GPUs but isn't available everywhere,
+    # so we fall back gracefully rather than crashing
     if not args.no_compile:
         try:
             model = torch.compile(model)
@@ -373,8 +380,11 @@ def main():
         except Exception as e:
             print(f"torch.compile unavailable, continuing without compile: {e}")
 
+    # Tversky with alpha=0.7, beta=0.3 skews toward recall (penalizes false negatives more),
+    # which is what we want for sparse networks where missing signal matters more than false positives
     loss_func = TverskyLoss(sigmoid=True, alpha=0.7, beta=0.3)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-5)
+    # warm restarts let the LR spike periodically to escape local minima
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
         optimizer, T_0=500, T_mult=2
     )

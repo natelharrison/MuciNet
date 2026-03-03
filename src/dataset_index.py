@@ -26,6 +26,8 @@ def _iter_trial_dirs(root: Path) -> List[Path]:
     return trial_dirs
 
 
+# Olympus max-projection exports get named MAX_<original>.tif or MAX_chan1_<original>.tif.
+# We strip that prefix to recover the original sample ID used for grouping and stats.
 def _strip_mip_prefix(stem: str) -> str:
     for prefix in ("MAX_", "MAX_chan1_", "MAX_chan0_"):
         if stem.startswith(prefix):
@@ -41,23 +43,17 @@ def _list_input_tiffs(owner_dir: Path) -> List[Path]:
     return sorted(list(owner_dir.glob("*.tif")) + list(owner_dir.glob("*.tiff")))
 
 
+# One entry per TIFF in the dataset. Used for discovery and counting.
+# Actual file routing during inference is handled separately by pipeline_utils.
 @dataclass(frozen=True)
 class DatasetImage:
     root: Path
     trial_name: str
-    comparison_group: Optional[str]  # e.g. "WT" or other; None when trial has no comparison folders
-    image_id: str  # derived from file stem
-
+    comparison_group: Optional[str]  # e.g. "WT" or "Mut"; None if trial has no subgroups
+    image_id: str  # file stem with any MIP prefix stripped
     trial_dir: Path
-    owner_dir: Path  # either trial_dir or trial_dir/<comparison_group>
-
+    owner_dir: Path  # the phenotype folder this image lives in
     tiff_path: Path
-    source_oib_path: Optional[Path]
-
-    output_root: Path
-    derived_mask_path: Path
-    derived_overlay_path: Path
-    derived_metrics_csv_path: Path
 
 
 @dataclass(frozen=True)
@@ -102,8 +98,6 @@ def index_dataset(
     """
     trial_dirs = _iter_trial_dirs(root)
 
-    output_root = root / "mucinet-results"
-
     trials_out: List[TrialIndex] = []
     images_out: List[DatasetImage] = []
 
@@ -116,7 +110,8 @@ def index_dataset(
                 f"Expected ROOT/<TRIAL>/<PHENOTYPE>/*.tif"
             )
 
-        # Consider only phenotype dirs that contain at least one TIFF or OIB directly inside them.
+        # A subfolder counts as a phenotype group only if it has images directly inside it.
+        # We check for OIBs too so the layout validates before conversion has been run.
         phenotype_dirs = []
         for p in sorted(trial_dir.iterdir()):
             if not p.is_dir():
@@ -144,14 +139,6 @@ def index_dataset(
             for mip in mips:
                 image_id = _strip_mip_prefix(mip.stem)
 
-                oib_path = (phenotype_dir / f"{image_id}.oib") if (phenotype_dir / f"{image_id}.oib").exists() else None
-
-                rel_owner = phenotype_dir.relative_to(root)
-                results_root = output_root / rel_owner
-                derived_mask = results_root / "network_binary" / mip.name
-                derived_overlay = results_root / "network_overlay" / mip.name
-                derived_metrics = results_root / "metrics" / f"{mip.stem}_network_stats.csv"
-
                 images_out.append(
                     DatasetImage(
                         root=root,
@@ -161,11 +148,6 @@ def index_dataset(
                         trial_dir=trial_dir,
                         owner_dir=phenotype_dir,
                         tiff_path=mip,
-                        source_oib_path=oib_path,
-                        output_root=output_root,
-                        derived_mask_path=derived_mask,
-                        derived_overlay_path=derived_overlay,
-                        derived_metrics_csv_path=derived_metrics,
                     )
                 )
 

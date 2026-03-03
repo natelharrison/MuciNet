@@ -5,35 +5,18 @@ import seaborn as sns
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from scipy.stats import ttest_ind
-import pipeline_utils
 import traceback
-import json
-import sys
-import platform
-from datetime import datetime
-import network_detector
+import pipeline_utils
+from dataset_index import _strip_mip_prefix
 
 
-def _strip_mip_prefix(stem: str) -> str:
-    for prefix in ("MAX_", "MAX_chan0_", "MAX_chan1_"):
-        if stem.startswith(prefix):
-            return stem[len(prefix) :]
-    return stem
-
-
-def load_and_combine(input_root, output_root, suffix):
+def load_and_combine(output_root, suffix):
     files = list((output_root).rglob(f"metrics/*{suffix}"))
     if not files:
         return None
 
     dfs = []
     for p in files:
-        if p.name.startswith("DATA_") or p.name.startswith("SUMMARY_") or "Combined" in p.name:
-            continue
-        if p.name == "combined_metrics.csv":
-            continue
-
         try:
             df = pd.read_csv(p)
 
@@ -68,60 +51,6 @@ def load_and_combine(input_root, output_root, suffix):
             print(f"[!] Skipped file {p}: {e}")
 
     return pd.concat(dfs, ignore_index=True) if dfs else None
-
-
-def plot_metric_polished(ax, data, x_col, y_col, hue_col, title, ylabel, show_legend=False):
-    order = sorted(data[x_col].unique())
-    hue_order = sorted(data[hue_col].dropna().unique())
-
-    if 'Norm' in title:
-        ax.axhline(1.0, linestyle=':', color='black', alpha=0.4, linewidth=1)
-
-    sns.stripplot(
-        data=data,
-        x=x_col, y=y_col, hue=hue_col,
-        palette="tab10", order=order, hue_order=hue_order,
-        dodge=True, jitter=True, size=6, alpha=0.4,
-        ax=ax, legend=False, zorder=0
-    )
-
-    sns.pointplot(
-        data=data,
-        x=x_col, y=y_col, hue=hue_col,
-        palette="tab10", order=order, hue_order=hue_order,
-        dodge=0.4, capsize=0.1,
-        errorbar='se', markers="D", linestyles="",
-        markersize=6,
-        ax=ax, legend=False, zorder=10
-    )
-
-    ax.set_title(title, fontweight='bold', fontsize=14, pad=10)
-    ax.set_ylabel(ylabel, fontsize=12)
-    ax.set_xlabel("")
-
-    for i, group in enumerate(order):
-        sub = data[data[x_col] == group]
-        # Only annotate stats when exactly two groups exist and one is WT.
-        hues = sorted([h for h in sub[hue_col].dropna().unique()])
-        if "WT" in hues and len(hues) == 2:
-            other = [h for h in hues if h != "WT"][0]
-            wt = sub[sub[hue_col] == "WT"][y_col].dropna()
-            other_vals = sub[sub[hue_col] == other][y_col].dropna()
-
-            if len(wt) > 1 and len(other_vals) > 1:
-                stat, p = ttest_ind(wt, other_vals, equal_var=False)
-                sig = "***" if p < 0.001 else "**" if p < 0.01 else "*" if p < 0.05 else "ns"
-
-                y_max = sub[y_col].max()
-                y_pos = y_max + (data[y_col].max() * 0.05)
-
-                ax.text(i, y_pos, f"{sig}\n(p={p:.3f})",
-                        ha='center', va='bottom', fontsize=9, fontweight='bold')
-
-    if show_legend:
-        handles, labels = ax.get_legend_handles_labels()
-        if handles:
-            ax.legend(handles, labels, loc='upper right', frameon=False)
 
 
 def make_bar_plots(net_df, output_dir: Path):
@@ -191,16 +120,11 @@ def make_bar_plots(net_df, output_dir: Path):
     print("[ok] plots saved.")
 
 
-def save_global_network_montage(output_root: Path, output_dir: Path):
-    """create a single full-resolution montage across all trials (optional)."""
+def save_global_network_montage(output_root: Path):
+    """Create a global montage of all network overlay images."""
     all_images = sorted(list(output_root.rglob("network_overlay/*.tif")) + list(output_root.rglob("network_overlay/*.tiff")))
     if not all_images:
         return
-
-    # Matplotlib montages get very slow and huge at high DPI with many images.
-    # Keep this moderate; users still get full-resolution per-image overlays in mucinet-results.
-    dpi = 300
-    downscale = 1.0
 
     trial_map = {}
     for p in all_images:
@@ -232,7 +156,6 @@ def save_global_network_montage(output_root: Path, output_dir: Path):
             if paths:
                 color = "#555555" if group_name == "WT" else "#E63946" if group_name != "NA" else "#777777"
                 montage_groups.append({
-                    # "label": f"{trial_name} | {group_name}",
                     "paths": paths,
                     "color": color,
                 })
@@ -241,17 +164,12 @@ def save_global_network_montage(output_root: Path, output_dir: Path):
     if not ordered_images:
         return
 
-    output_path = output_dir / "global_montage.png"
+    output_path = output_root / "global_montage.png"
     try:
         pipeline_utils.create_montage(
-            "",
             ordered_images,
             output_path,
-            group_by_genotype=False,
-            enhance=False,
             groups=montage_groups,
-            dpi=dpi,
-            downscale=downscale,
         )
         print(f"[ok] global montage: {output_path.name}")
     except Exception:
@@ -263,19 +181,20 @@ def main():
     parser = argparse.ArgumentParser(
         description="Combine per-image stats and generate plots."
     )
-    parser.add_argument("data_dir", type=Path, help="Project root containing trial folders")
+    parser.add_argument("--dir", type=Path, required=True, help="Dataset root containing trial folders")
     parser.add_argument("--montage", action="store_true",
                         help="Generate a single full-resolution global montage.")
     args = parser.parse_args()
 
-    output_root = pipeline_utils.get_output_root(args.data_dir)
+    output_root = pipeline_utils.get_output_root(args.dir)
     output_root.mkdir(parents=True, exist_ok=True)
 
-    print(f"--- compiling stats & cleaning data in {args.data_dir} ---")
+    print(f"--- compiling stats & cleaning data in {args.dir} ---")
 
-    net_df = load_and_combine(args.data_dir, output_root, "network_stats.csv")
+    net_df = load_and_combine(output_root, "network_stats.csv")
     if net_df is not None:
-        # Optional per-trial normalization to WT mean when WT exists and comparison groups exist.
+        # Normalize each trial to its own WT mean so images from different sessions are comparable.
+        # We do this per-trial rather than globally because illumination varies between sessions.
         if "comparison_group" in net_df.columns and "monai_mask_pixels" in net_df.columns:
             net_df["monai_mask_pixels_norm_to_wt"] = pd.NA
             for trial_name, idxs in net_df.groupby("trial_name").groups.items():
@@ -288,16 +207,15 @@ def main():
                 if wt_mean and wt_mean > 0:
                     net_df.loc[idxs, "monai_mask_pixels_norm_to_wt"] = sub["monai_mask_pixels"] / wt_mean
 
+        # pandas sometimes inserts "Unnamed: 0" columns when round-tripping through CSV; drop them
         cols_to_save = [c for c in net_df.columns if 'Unnamed' not in c]
         net_df[cols_to_save].to_csv(output_root / "combined_metrics.csv", index=False)
 
     if args.montage:
-        save_global_network_montage(output_root, output_root)
+        save_global_network_montage(output_root)
 
     make_bar_plots(net_df, output_root)
 
 
 if __name__ == "__main__":
     main()
-
-

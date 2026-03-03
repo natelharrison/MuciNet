@@ -4,8 +4,8 @@ import numpy as np
 import tifffile
 from skimage.util import view_as_windows
 
-CROP_SIZE = 512
-STEP = 256
+CROP_SIZE = 512  # must match the model's input size
+STEP = 256       # 50% overlap so features at tile edges appear in at least two crops
 
 
 def parse_args():
@@ -81,7 +81,7 @@ def process_and_save(data_dir, mask_key, keep_empty_prob):
             # Mask: constant zero padding is correct for "outside image = background"
             mask = np.pad(mask, ((0, pad_h), (0, pad_w)), mode="constant", constant_values=0)
 
-        # Optional sanity check (can remove later)
+        # verify the padding math before we commit to slicing windows
         assert img.shape[0] >= CROP_SIZE and img.shape[1] >= CROP_SIZE
         assert (img.shape[0] - CROP_SIZE) % STEP == 0, f"Height not stride-aligned: {img.shape[0]}"
         assert (img.shape[1] - CROP_SIZE) % STEP == 0, f"Width not stride-aligned: {img.shape[1]}"
@@ -94,8 +94,13 @@ def process_and_save(data_dir, mask_key, keep_empty_prob):
 
         count = 0
         for i, (ip, mp) in enumerate(zip(img_patches, mask_patches)):
+            # keep a random fraction of blank crops so the model sees real background too
             keep_empty = (mp.max() == 0) and (np.random.rand() < keep_empty_prob)
+            # ip.max() > 80 keeps crops that have signal even if the mask is empty —
+            # a rough "not a dark blank tile" check for 16-bit images
             if mp.max() > 0 or ip.max() > 80 or keep_empty:
+                # the 4-digit index encodes which crop this is from the source image;
+                # monai_train.py uses this to keep all crops from one image on the same split side
                 save_id = f"{img_path.stem}_{i:04d}"
                 tifffile.imwrite(out_dir / f"{save_id}.tif", ip.astype(np.float32))
                 tifffile.imwrite(out_dir / f"{save_id}{mask_key}", mp.astype(np.uint8))

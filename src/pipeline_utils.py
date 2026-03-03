@@ -1,18 +1,16 @@
 import tifffile
 import numpy as np
 import cv2 as cv
-import matplotlib.pyplot as plt
-import math
 from pathlib import Path
 from tqdm import tqdm
 
-MIN_DYNAMIC_RANGE = 30
+MIN_DYNAMIC_RANGE = 30  # images with less intensity range than this are treated as blank
 MONTAGE_COLS = 4
 
 
-def get_output_root(input_root: Path) -> Path:
-    """returns the output root folder under the dataset root directory."""
-    return input_root / "mucinet-results"
+def get_output_root(data_dir: Path) -> Path:
+    """Returns the results output folder under the dataset root."""
+    return data_dir / "mucinet-results"
 
 
 def imread(path):
@@ -29,16 +27,6 @@ def imwrite(path, image):
         tifffile.imwrite(path, image)
 
 
-def get_foreground(image, mask):
-    """returns image with background pixels zeroed out."""
-    return np.where(mask != 0, image, 0)
-
-
-def get_background(image, mask):
-    """returns image with foreground (cells/network) zeroed out."""
-    return np.where(mask == 0, image, 0)
-
-
 def create_overlay(raw, mask, color=(0, 255, 255)):
     """creates a cyan overlay of the mask onto the raw image."""
     if raw.dtype != np.uint8:
@@ -48,47 +36,13 @@ def create_overlay(raw, mask, color=(0, 255, 255)):
     return rgb
 
 
-def _enhance_overlay_for_montage(image: np.ndarray) -> np.ndarray:
-    """gentle contrast stretch and stronger cyan overlay without color shifts."""
-    img = image.astype(np.float32, copy=False)
-
-    if img.ndim == 2:
-        p5, p95 = np.percentile(img, (5, 95))
-        if p95 > p5:
-            img = (img - p5) / (p95 - p5)
-        img = np.clip(img, 0, 1) ** 0.9
-        return (img * 255.0).astype(np.uint8)
-
-    lum = (0.2126 * img[..., 0] + 0.7152 * img[..., 1] + 0.0722 * img[..., 2])
-    p5, p95 = np.percentile(lum, (5, 95))
-    if p95 > p5:
-        lum = (lum - p5) / (p95 - p5)
-    lum = np.clip(lum, 0, 1) ** 0.9
-    base = (lum[..., None] * 255.0).astype(np.uint8)
-    out = np.repeat(base, 3, axis=2)
-
-    mask_pixels = (img[..., 1] > 150) & (img[..., 2] > 150) & (img[..., 0] < 100)
-    if np.any(mask_pixels):
-        alpha = 0.75
-        cyan = np.array([0, 255, 255], dtype=np.uint8)
-        out[mask_pixels] = (out[mask_pixels] * (1 - alpha) + cyan * alpha).astype(np.uint8)
-    return out
-
-
 def create_montage(
-    trial_name,
     image_paths,
     output_path,
-    group_by_genotype=True,
-    enhance=False,
     groups=None,
-    dpi=200,          # kept for compatibility; unused in canvas renderer
     downscale=0.5,
 ):
-    """
-    Create a montage as a single image canvas with GROUP HEADERS (folder names) only.
-    No per-image titles. Uses OpenCV canvas rendering (robust, no matplotlib layout issues).
-    """
+    """Create a montage canvas with group headers. Uses OpenCV rendering."""
     if not image_paths:
         return
 
@@ -124,13 +78,7 @@ def create_montage(
         return (b, g, r)
 
     def _to_rgb_u8(img):
-        """Display normalization to RGB uint8."""
         img = np.asarray(img)
-
-        if enhance:
-            img = _enhance_overlay_for_montage(img)
-
-        # Simple min-max normalization for display
         img = cv.normalize(img, None, 0, 255, cv.NORM_MINMAX, dtype=cv.CV_8U)
 
         if img.ndim == 2:
@@ -175,7 +123,6 @@ def create_montage(
     # Layout constants (pixels)
     margin_x = 30
     margin_y = 20
-    top_title_h = 55
     cell_pad_x = 12
     cell_pad_y = 12
     group_header_h = 34
@@ -199,7 +146,7 @@ def create_montage(
         return
 
     # Compute canvas size
-    total_h = margin_y + top_title_h + margin_y
+    total_h = margin_y
     for row in row_specs:
         if row["type"] == "group_header":
             total_h += group_header_h
@@ -212,19 +159,7 @@ def create_montage(
     total_w = margin_x + content_w + margin_x
     canvas = np.full((total_h, total_w, 3), 255, dtype=np.uint8)
 
-    # Trial title (top)
-    cv.putText(
-        canvas,
-        str(trial_name),
-        (margin_x, margin_y + 35),
-        cv.FONT_HERSHEY_SIMPLEX,
-        1.0,
-        (0, 0, 0),
-        2,
-        cv.LINE_AA,
-    )
-
-    y = margin_y + top_title_h + margin_y
+    y = margin_y
     x0 = margin_x
 
     for row in row_specs:
@@ -287,21 +222,18 @@ def create_montage(
 
 def _worker(args):
     paths, func = args
-    img_path, mask_path, input_root, output_root = paths
+    img_path, data_dir, output_root = paths
 
     image = imread(img_path)
-    if mask_path is not None and mask_path.exists():
-        mask = imread(mask_path)
-    else:
-        mask = np.ones(image.shape, dtype=np.uint8)
-
-    results = func(image, mask)
+    results = func(image)
     if not results:
         return
 
+    # mirror the source folder structure under mucinet-results/
+    # e.g. ROOT/Trial_01/WT/img.tif -> mucinet-results/Trial_01/WT/{network_binary,overlay,metrics}/
     owner_dir = img_path.parent
     try:
-        rel_owner = owner_dir.relative_to(input_root)
+        rel_owner = owner_dir.relative_to(data_dir)
     except ValueError:
         rel_owner = Path(owner_dir.name)
     results_root = output_root / rel_owner
@@ -316,24 +248,23 @@ def _worker(args):
             imwrite(save_path, data)
 
 
-def build_tasks(parent_dir, output_root=None):
+def build_tasks(data_dir, output_root=None):
     if output_root is None:
-        output_root = get_output_root(parent_dir)
+        output_root = get_output_root(data_dir)
     tasks = []
 
-    # Only consider TIFFs located directly in phenotype folders (ROOT/<TRIAL>/<PHENOTYPE>/*.tif).
-    tiff_imgs = list(parent_dir.rglob("*.tif")) + list(parent_dir.rglob("*.tiff"))
+    # Only consider TIFFs at depth ROOT/<TRIAL>/<PHENOTYPE>/*.tif.
+    tiff_imgs = list(data_dir.rglob("*.tif")) + list(data_dir.rglob("*.tiff"))
     for img in sorted(set(tiff_imgs)):
         if "mucinet-results" in img.parts:
             continue
         try:
-            rel = img.relative_to(parent_dir)
+            rel = img.relative_to(data_dir)
         except ValueError:
             continue
-        # Require TIFF to be directly inside the phenotype folder.
-        if len(rel.parts) != 3:
+        if len(rel.parts) != 3:  # must be ROOT/<TRIAL>/<PHENOTYPE>/file.tif
             continue
-        tasks.append((img, None, parent_dir, output_root))
+        tasks.append((img, data_dir, output_root))
     return tasks
 
 
@@ -341,5 +272,5 @@ def run_pipeline(tasks, process_func):
     if not tasks:
         return
     print(f"processing {len(tasks)} files on a single process...")
-    for t in tqdm(tasks, total=len(tasks)):
+    for t in tqdm(tasks):
         _worker((t, process_func))

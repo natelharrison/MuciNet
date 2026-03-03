@@ -8,7 +8,6 @@ from monai.networks.nets import AttentionUnet
 from monai.inferers import SlidingWindowInferer
 from skimage import morphology
 import pipeline_utils
-from monai.networks.nets import DynUNet
 
 
 _DEFAULT_MODEL_PATH = (
@@ -16,13 +15,13 @@ _DEFAULT_MODEL_PATH = (
 )
 MODEL_PATH = _DEFAULT_MODEL_PATH if _DEFAULT_MODEL_PATH.exists() else None
 
-ROI_SIZE = (512, 512)
-
-PROB_THRESHOLD = 0.5
-MIN_OBJECT_SIZE = 64
-DEVICE = "auto"
-SW_BATCH_SIZE = 16
-SW_OVERLAP = 0.5
+# inference defaults — all overridable via CLI flags
+ROI_SIZE = (512, 512)       # sliding window tile size; must match training crop size
+PROB_THRESHOLD = 0.5        # sigmoid output cutoff for network vs. background
+MIN_OBJECT_SIZE = 64        # connected components smaller than this get dropped as noise
+DEVICE = "auto"             # "auto" picks cuda if available, otherwise cpu
+SW_BATCH_SIZE = 16          # how many tiles to run through the model at once
+SW_OVERLAP = 0.5            # 50% tile overlap reduces edge artifacts
 
 
 def normalize_to_8bit(image):
@@ -57,6 +56,7 @@ def preprocess(image: np.ndarray) -> np.ndarray:
     return im.astype(np.float32, copy=False)
 
 
+# cached after first load so we don't reload the model for every image
 _MODEL = None
 _INFERER = None
 _DEVICE = None
@@ -88,24 +88,12 @@ def _load_model():
         strides=(2, 2, 2, 2),
     ).to(_DEVICE)
 
-    # model = DynUNet(
-    #     spatial_dims=2,
-    #     in_channels=1,
-    #     out_channels=1,
-    #     kernel_size=[3, 3, 3, 3, 3],
-    #     strides=[1, 2, 2, 2, 2],
-    #     upsample_kernel_size=[2, 2, 2, 2],
-    #     filters=[32, 64, 128, 256, 512],
-    #     norm_name="instance",
-    #     act_name=("leakyrelu", {"inplace": True, "negative_slope": 0.01}),
-    #     deep_supervision=False,
-    #     res_block=True,
-    # ).to(_DEVICE)
-
     state_dict = torch.load(MODEL_PATH, map_location=_DEVICE)
     if isinstance(state_dict, dict) and "state_dict" in state_dict:
         state_dict = state_dict["state_dict"]
 
+    # torch.compile prefixes every key with "_orig_mod." when the model is saved.
+    # Strip it so the weights load cleanly into the uncompiled model at inference time.
     clean_state_dict = {}
     for k, v in state_dict.items():
         if k.startswith("_orig_mod."):
@@ -126,12 +114,14 @@ def _load_model():
     return _MODEL, _INFERER, _DEVICE
 
 
-def analyze_networks(image, mask):
+def analyze_networks(image):
     model, inferer, device = _load_model()
     im_norm = preprocess(image)
 
+    # add batch and channel dims: (H, W) -> (1, 1, H, W)
     inp = torch.from_numpy(im_norm[None, None, ...]).to(device=device, dtype=torch.float32)
 
+    # nullcontext is a no-op stand-in so the with-block works the same on CPU and GPU
     autocast_ctx = torch.amp.autocast("cuda") if device == "cuda" else nullcontext()
 
     with torch.no_grad():
@@ -145,6 +135,8 @@ def analyze_networks(image, mask):
 
     raw_pixel_count = int(np.count_nonzero(pred_mask))
 
+    # log inference params alongside the pixel count so every row in the output CSV
+    # is self-contained and results are reproducible without hunting for config files
     stats = pd.DataFrame({
         "monai_mask_pixels": [raw_pixel_count],
         "model_path": [str(MODEL_PATH)],
@@ -168,7 +160,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Run MONAI network segmentation on input TIFFs."
     )
-    parser.add_argument("parent_dir", type=Path, help="Project root containing trial folders")
+    parser.add_argument("--dir", type=Path, required=True, help="Dataset root containing trial folders")
     parser.add_argument(
         "--model-path",
         type=Path,
@@ -207,5 +199,5 @@ if __name__ == "__main__":
     PROB_THRESHOLD = float(args.threshold)
     MIN_OBJECT_SIZE = int(args.min_object_size)
 
-    tasks = pipeline_utils.build_tasks(args.parent_dir)
+    tasks = pipeline_utils.build_tasks(args.dir)
     pipeline_utils.run_pipeline(tasks, analyze_networks)

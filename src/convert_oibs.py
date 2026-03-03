@@ -14,7 +14,7 @@ def convert_single_oib(oib_path: Path, owner_dir: Path):
     if image.shape[0] < 2:
         raise ValueError(f"Unexpected OIB array shape (need at least 2 planes in first dim), got shape={image.shape}")
 
-    # Single-channel max projection saved next to the OIB.
+    # channel 0 is the DIC/brightfield channel; channel 1 is the fluorescence signal we want
     chan = image[1]
     save_path = owner_dir / f"MAX_{oib_path.stem}.tif"
     max_z = np.max(chan, axis=0)
@@ -23,7 +23,7 @@ def convert_single_oib(oib_path: Path, owner_dir: Path):
 
 def main():
     parser = argparse.ArgumentParser(description="Step 1: Convert OIBs to Max-Z TIFs")
-    parser.add_argument("dir", type=Path, help="Dataset ROOT containing trial folders")
+    parser.add_argument("--dir", type=Path, required=True, help="Dataset root containing trial folders")
     parser.add_argument(
         "--force-convert",
         "--force_convert",
@@ -65,7 +65,6 @@ def main():
             print(f"Error converting {oib_path.name}: {e}")
 
     print("\n[!] Conversion Complete.")
-
 
 
 if __name__ == "__main__":
