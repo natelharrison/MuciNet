@@ -27,7 +27,6 @@ def _iter_trial_dirs(root: Path) -> List[Path]:
 
 
 def _strip_mip_prefix(stem: str) -> str:
-    # Matches max-projection naming conventions: MAX_<image_id>.tif (and legacy MAX_chan*_...)
     for prefix in ("MAX_", "MAX_chan1_", "MAX_chan0_"):
         if stem.startswith(prefix):
             return stem[len(prefix) :]
