@@ -1,23 +1,29 @@
 # IDE
 .idea/
 
+# Claude Code
+.claude/
+
 # Python
 __pycache__/
 *.pyc
 
 # Pipeline outputs
 mucinet-results/
+
+# Model weights (large binary files — store externally)
+/models/
+/model_training/lean_best.pth
+/model_training/lean_final.pth
+
+# Training artifacts
 /model_training/check_batch.png
 /model_training/curated_data/
-/model_training/curated_data/
 /model_training/wandb/
+/model_training/loocv_logs/
 /model_training/python
-/model_training/lean_best.pth
-/model_training/loocv_logs
-/wandb
-model_training/run_loocv_all.bat
-/model_training/curated_data
+/model_training/run_loocv_all.bat
+/wandb/
+
+# Data files
 *.tif
-/model_training/curated_data/crops_lean
-/model_training/curated_data
-model_training/curated_data/crops_lean/13MAX_chan1_V1 - StcE - Streptavidin 488 - Dapi - 60x peri 2_0000_mask.tif

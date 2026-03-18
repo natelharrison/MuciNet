@@ -11,7 +11,7 @@ import pipeline_utils
 
 
 _DEFAULT_MODEL_PATH = (
-    Path(__file__).resolve().parent.parent / "model_training" / "lean_best.pth"
+    Path(__file__).resolve().parent.parent / "models" / "loocv_epoch_0375.pth"
 )
 MODEL_PATH = _DEFAULT_MODEL_PATH if _DEFAULT_MODEL_PATH.exists() else None
 
@@ -165,7 +165,7 @@ if __name__ == "__main__":
         "--model-path",
         type=Path,
         default=None,
-        help="Path to MONAI checkpoint (default: model_training/lean_best.pth).",
+        help="Path to MONAI checkpoint (default: models/loocv_epoch_0375.pth).",
     )
     parser.add_argument(
         "--roi-size",

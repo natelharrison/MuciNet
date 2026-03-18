@@ -30,19 +30,13 @@ def main():
     )
     parser.add_argument("--dir", type=Path, required=True, help="Dataset root containing trial folders")
     parser.add_argument(
-        "--convert-oibs",
-        "--convert_oibs",
-        action="store_true",
-        help="Optional: run src/convert_oibs.py before analysis",
-    )
-    parser.add_argument(
         "--force-convert",
         "--force_convert",
         action="store_true",
-        help="With --convert-oibs: force .oib -> TIFF conversion even if outputs already exist",
+        help="Force .oib -> TIFF conversion even if outputs already exist",
     )
-    parser.add_argument("--model-path", type=Path, default=None,
-                        help="Path to MONAI checkpoint (default: model_training/lean_best.pth).")
+    parser.add_argument("--model-path", "--model_path", type=Path, default=None,
+                        help="Path to MONAI checkpoint (default: models/loocv_epoch_0375.pth).")
     parser.add_argument(
         "--montage",
         action="store_true",
@@ -52,14 +46,11 @@ def main():
 
     path_str = str(args.dir)  # subprocess calls need plain strings, not Path objects
 
-    if args.force_convert and not args.convert_oibs:
-        parser.error("--force-convert requires --convert-oibs")
-
-    if args.convert_oibs:
-        convert_args = ["--dir", path_str]
-        if args.force_convert:
-            convert_args.append("--force-convert")
-        run_step("convert_oibs.py", convert_args)
+    # Always attempt OIB conversion; --force-convert overwrites existing TIFFs
+    convert_args = ["--dir", path_str]
+    if args.force_convert:
+        convert_args.append("--force-convert")
+    run_step("convert_oibs.py", convert_args)
 
     # Index for logging and final validation.
     try:
